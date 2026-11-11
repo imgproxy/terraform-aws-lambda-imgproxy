@@ -4,17 +4,15 @@ Terraform module to deploy [imgproxy](https://imgproxy.net/) on AWS Lambda as a 
 
 ## Features
 
-The module creates the required resources:
-
-- Lambda function running the imgproxy container image, with a Function URL that streams responses
+- Lambda function running imgproxy, with a response-streaming Function URL
 - ECR repository with the imgproxy image mirrored into it (Lambda runs ECR images only)
 - Provisioned and reserved concurrency (optional)
 - VPC attachment (optional)
-- IAM function role (or use your own)
+- IAM function role (or bring your own)
 - CloudFront distribution (optional), with the Function URL locked to it
 - X-Ray tracing and CloudWatch metrics (optional)
 
-Also supported: request signing, imgproxy Pro and private registries through Secrets Manager, S3 as image source and result cache (Pro). Secure by default ([details](#secure-defaults)).
+Also supported: request signing, imgproxy Pro and private registries via Secrets Manager, S3 as image source and result cache (Pro). Secure by default ([details](#secure-defaults)).
 
 ## Usage
 
@@ -33,7 +31,7 @@ module "imgproxy" {
 }
 ```
 
-Requires Terraform >= 1.5, AWS provider >= 6.28, an authenticated AWS CLI with [sufficient permissions](#permissions), and [crane](https://github.com/google/go-containerregistry/blob/main/cmd/crane/README.md#installation) (plus `jq` with `repo_credentials_secret`) to mirror the image, unless `repo` is a pre-created ECR repository or `image_uri` is set ([Image delivery](#image-delivery)). The module creates no networking.
+Requires Terraform >= 1.5, AWS provider >= 6.28, an authenticated AWS CLI with [sufficient permissions](#permissions), and [crane](https://github.com/google/go-containerregistry/blob/main/cmd/crane/README.md#installation) to mirror the image (plus `jq` with `repo_credentials_secret`). crane is not needed if `repo` is a pre-created ECR repository or `image_uri` is set ([Image delivery](#image-delivery)). The module creates no networking.
 
 ## Examples
 
@@ -50,28 +48,33 @@ Start with [insecure](examples/insecure/) and follow the "Next" link at the end 
 
 ### Secure defaults
 
-Requests must be signed; `insecure = true` is the explicit opt-in for development, where anyone can use your imgproxy and, with `source_buckets`, read those buckets.
+Requests must be signed. `insecure = true` is an explicit development opt-in: anyone can use your imgproxy and, with `source_buckets`, read those buckets.
 
-The Function URL is public by default. `allow_public_access = false` makes it IAM-only (callers sign with SigV4), and with `enable_cloudfront = true` it is IAM-only automatically, callable by your distribution alone.
+The Function URL is public by default. `allow_public_access = false` makes it IAM-only (SigV4). With `enable_cloudfront = true` it is IAM-only automatically, callable by your distribution alone.
 
 ### Permissions
 
-The deployer needs permissions for Lambda, ECR, Secrets Manager, CloudWatch log groups, CloudFront and, to attach the function to a VPC, EC2 networking. Two example policies are provided; before using either, replace `123456789012` with your AWS account ID. The statements match names that start with `imgproxy` (a `service_name` such as `imgproxy` or `imgproxy-lambda`): if yours starts differently, change the prefix in every statement (the module names its role `<service_name>-function-*`, its ECR repository `<service_name>` and its dotenv secret `<service_name>-env-*`).
+The deployer needs permissions for Lambda, ECR, Secrets Manager, CloudWatch log groups, CloudFront and, with a VPC, EC2 networking. Two example policies are provided. Replace `123456789012` with your account ID. Statements match names starting with `imgproxy`; if your `service_name` differs, change the prefix everywhere (the module names its role `<service_name>-function-*`, its ECR repository `<service_name>` and its dotenv secret `<service_name>-env-*`).
 
-- [example-permission-set.json](example-permission-set.json): the module creates the function role, so the deployer needs IAM access, limited to roles named `imgproxy*-function-*`. Treat this identity as privileged.
-- [example-permission-set-existing-roles.json](example-permission-set-existing-roles.json): you create the role and pass it as `role_arn`; the deployer then needs only `iam:PassRole` on it. The role needs logging, secrets access and, with a VPC, the VPC access policy itself.
+- [example-permission-set.json](example-permission-set.json): the module creates the function role, so the deployer needs IAM access limited to `imgproxy*-function-*` roles. Treat this identity as privileged.
+- [example-permission-set-existing-roles.json](example-permission-set-existing-roles.json): you pass your own `role_arn`; the deployer needs only `iam:PassRole` on it. The role needs logging, secrets access and, with a VPC, the VPC access policy.
 
-`ReadSecretValues` allows `secretsmanager:GetSecretValue` on secrets whose names start with `imgproxy`: the module reads the values of the secrets you pass (see [Additional secrets](#additional-secrets)). Narrow it to those secrets, and drop the EC2 statements if you do not attach the function to a VPC. With `repo_credentials_secret` the identity also needs `secretsmanager:GetSecretValue` on that secret (covered when its name starts with `imgproxy`). If `repo` is your own ECR repository, the identity needs `ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer` and `ecr:GetRepositoryPolicy` on it, which the `imgproxy*` ECR statement does not cover unless the repository name matches. With `cdn_waf_web_acl_id`, add the WAF read permissions your account requires.
+Notes:
 
-These policies were checked against the module's resources but not applied to a real AWS account; adjust them if an apply fails with `AccessDenied`.
+- `ReadSecretValues` allows `secretsmanager:GetSecretValue` on secrets named `imgproxy*`. Narrow it to the secrets you pass, including `repo_credentials_secret`.
+- Drop the EC2 statements if you use no VPC.
+- For your own ECR `repo`, also grant `ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer` and `ecr:GetRepositoryPolicy` on it.
+- With `cdn_waf_web_acl_id`, add the WAF read permissions your account requires.
+
+The policies were checked against the module's resources but not applied to a real AWS account; adjust them if an apply fails with `AccessDenied`.
 
 ### Networking
 
-By default the function runs outside any VPC with internet access. Set `vpc_id` and `subnet_ids` (private subnets) only to reach private resources; the function then needs a **NAT gateway** to fetch source images from the internet, or VPC endpoints for S3 and Secrets Manager. Add rules through `security_group_id` or `additional_security_group_ids`.
+By default the function runs outside any VPC, with internet access. Set `vpc_id` and `subnet_ids` (private subnets) only to reach private resources; the function then needs a **NAT gateway** for internet source images, or VPC endpoints for S3 and Secrets Manager. Add rules via `security_group_id` or `additional_security_group_ids`.
 
 ### Additional secrets
 
-`secrets` maps extra environment variables (named as in [imgproxy's configuration](https://docs.imgproxy.net/configuration)) to Secrets Manager secrets. Lambda cannot inject secrets like ECS, so the module copies all secret values (signing keys, license key and `secrets`) into one dotenv secret that imgproxy loads at start (`IMGPROXY_ENV_AWS_SECRET_ID`). The values therefore pass through the Terraform state: protect it. Values must not contain single quotes or newlines.
+`secrets` maps extra environment variables (named as in [imgproxy's configuration](https://docs.imgproxy.net/configuration)) to Secrets Manager secrets. Lambda can't inject secrets like ECS, so the module copies all secret values (signing keys, license key, `secrets`) into one dotenv secret that imgproxy loads at start (`IMGPROXY_ENV_AWS_SECRET_ID`). The values pass through the Terraform state, so protect it. Values must not contain single quotes or newlines.
 
 ```hcl
 secrets = {
@@ -81,7 +84,7 @@ secrets = {
 
 ### Image delivery
 
-Lambda runs only ECR images from its own account and region, so the module copies `ghcr.io/imgproxy/imgproxy`, or `docker.imgproxy.pro/imgproxy` with `pro = true`, into an ECR repository on apply, for the function's architecture only. The official image already bundles the Lambda Web Adapter. For your own image, set `repo` (without tag) and `tag` (a version, or a `sha256:` digest). If `repo` is already an ECR repository of the same account and region (`<account>.dkr.ecr.<region>.amazonaws.com/...`), nothing is copied and no repository is created: the function uses `repo:tag` directly. Such an image must be single-platform for the function's architecture (Lambda rejects multi-platform indexes), and the repository must allow `lambda.amazonaws.com` to pull from it (`ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer`); you manage that yourself. For an image in another account or region, use `image_uri` after copying it yourself.
+Lambda runs only ECR images from its own account and region, so on apply the module copies `ghcr.io/imgproxy/imgproxy` (or `docker.imgproxy.pro/imgproxy` with `pro = true`) into ECR, for the function's architecture only. The official image bundles the Lambda Web Adapter. For your own image, set `repo` (no tag) and `tag` (a version or `sha256:` digest).
 
 ```hcl
 repo                    = "registry.example.com/imgproxy-custom"
@@ -89,35 +92,36 @@ repo_credentials_secret = { arn = "arn:aws:secretsmanager:us-east-1:123456789012
 tag                     = "my-tag"
 ```
 
-- Public images and **ECR** need no credentials. Other private registries need `repo_credentials_secret`, a JSON secret with `username` and `password` keys (for docker.imgproxy.pro the username is `imgproxy`). It is read by the machine running Terraform, not by the function.
-- The copy runs `scripts/mirror-image.sh` (needs [crane](https://github.com/google/go-containerregistry/blob/main/cmd/crane/README.md#installation) and the AWS CLI) when the image reference changes. Pin `tag`: a moved upstream tag is not re-copied. With a pre-created ECR `repo` (or `image_uri`) nothing is mirrored, so crane is not called and need not be installed.
-- To mirror outside Terraform, push the image to ECR yourself and set `image_uri`; nothing is copied then.
+- **ECR in the same account and region:** if `repo` is `<account>.dkr.ecr.<region>.amazonaws.com/...`, nothing is copied and no repository is created; the function uses `repo:tag`. The image must be single-platform for the function's architecture, and you must let `lambda.amazonaws.com` pull it (`ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer`).
+- **Another account or region:** copy the image yourself and set `image_uri`; nothing is mirrored.
+- **Credentials:** public images and ECR need none. Other private registries need `repo_credentials_secret`, a JSON secret with `username` and `password` (for docker.imgproxy.pro the username is `imgproxy`). Terraform reads it, not the function.
+- **Mirroring:** `scripts/mirror-image.sh` (needs [crane](https://github.com/google/go-containerregistry/blob/main/cmd/crane/README.md#installation) and the AWS CLI) runs when the image reference changes. Pin `tag`: a moved upstream tag is not re-copied.
 
 Functions run on arm64 (Graviton) by default; for images without `linux/arm64`, set `architecture = "x86_64"`.
 
 ### Scaling, monitoring and logs
 
-- Lambda scales by itself and hands one request to each instance, so `workers` defaults to 1. `memory_size` sets the CPU (about 1 vCPU per 1769 MB).
-- `reserved_concurrency` caps the function. `provisioned_concurrency` keeps that many instances initialized (billed continuously); the function is then published to the `live` alias and the Function URL points at it.
-- `enable_monitoring = true` turns on X-Ray active tracing and imgproxy's CloudWatch metrics (namespace `imgproxy`).
-- `source_buckets` and `cache_bucket` (Pro) grant IAM permissions on existing buckets; the module does not create them. Set `IMGPROXY_S3_REGION` in `environment` when a bucket is outside the default region.
-- imgproxy Pro registers a Lambda extension and sends its license heartbeat on invocations, so no setting is needed to enable it. Each function instance activates the license under the function name, so keep `reserved_concurrency` within your license's concurrency limit.
-- Responses are streamed, which lifts the 6 MB limit of buffered Function URLs. `function_timeout` must exceed `timeout`.
-- The function is named `service_name` unless you set `function_name`. Logs go to the CloudWatch group `/aws/lambda/<function name>`, kept for `log_retention_days` (365 by default).
+- Lambda scales by itself and gives each instance one request, so `workers` defaults to 1. `memory_size` sets CPU (about 1 vCPU per 1769 MB).
+- `reserved_concurrency` caps the function. `provisioned_concurrency` keeps instances initialized (billed continuously); the function is then published to the `live` alias and the Function URL points at it.
+- `enable_monitoring = true` turns on X-Ray tracing and imgproxy's CloudWatch metrics (namespace `imgproxy`).
+- `source_buckets` and `cache_bucket` (Pro) grant IAM access to existing buckets; the module doesn't create them. Set `IMGPROXY_S3_REGION` in `environment` for buckets outside the default region.
+- imgproxy Pro sends its license heartbeat via a Lambda extension, with no setup. Each instance activates the license under the function name, so keep `reserved_concurrency` within your license's limit.
+- Responses are streamed, lifting the 6 MB buffered limit. `function_timeout` must exceed `timeout`.
+- The function is named `service_name` unless you set `function_name`. Logs go to `/aws/lambda/<function name>`, kept `log_retention_days` (365 by default).
 
 ### CloudFront
 
-`enable_cloudfront = true` puts CloudFront in front of the Function URL, on its `*.cloudfront.net` domain or on yours through `cloudfront_domains` and `cloudfront_certificate_arn` (issued in **us-east-1**).
+`enable_cloudfront = true` puts CloudFront in front of the Function URL, on its `*.cloudfront.net` domain or yours via `cloudfront_domains` and `cloudfront_certificate_arn` (issued in **us-east-1**).
 
-The Function URL is locked to CloudFront: it requires IAM, and only your distribution is allowed to call it (Origin Access Control, SigV4), so there is no origin secret and no extra certificate to manage.
+The Function URL requires IAM and only your distribution may call it (Origin Access Control, SigV4), so there is no origin secret or extra certificate to manage.
 
-**Source URLs:** a double slash (`//`) in the request path makes the SigV4 request from CloudFront to the Function URL fail with `403 The request signature we calculated does not match`. Source URLs written as `plain/s3://bucket/key` or `plain/https://host/image.jpg` contain one, so percent-encode them (`plain/s3%3A%2F%2Fbucket%2Fkey`) or pass the source base64-encoded. Colons and `@` are fine.
+**Source URLs:** a double slash (`//`) in the path breaks the SigV4 request to the Function URL (`403 The request signature we calculated does not match`). Sources like `plain/s3://bucket/key` or `plain/https://host/image.jpg` contain one, so percent-encode them (`plain/s3%3A%2F%2Fbucket%2Fkey`) or base64-encode the source. Colons and `@` are fine.
 
-Cache keys follow your imgproxy configuration (`Accept` with format detection, client hints, `IMGPROXY_CACHE_KEY_HEADERS` and `IMGPROXY_CACHE_KEY_COOKIES`). `secret_secret` cannot be combined with CloudFront, which does not forward `Authorization`. Query strings are not forwarded either, so percent-encode any `?` in plain source URLs.
+Cache keys follow your imgproxy configuration (`Accept` with format detection, client hints, `IMGPROXY_CACHE_KEY_HEADERS`, `IMGPROXY_CACHE_KEY_COOKIES`). CloudFront doesn't forward `Authorization`, so `secret_secret` can't be used with it. Query strings aren't forwarded either: percent-encode any `?` in plain source URLs.
 
 ### Vendored modules
 
-`modules/aws-common` and `modules/imgproxy-common` are generated copies from `imgproxy/terraform-common`. Do not edit them here: change them upstream and run its `sync.sh`.
+`modules/aws-common` and `modules/imgproxy-common` are generated copies from `imgproxy/terraform-common`. Don't edit them here; change them upstream and run its `sync.sh`.
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
