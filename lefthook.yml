@@ -1,0 +1,5 @@
+pre-commit:
+  commands:
+    terraform-docs:
+      glob: "*.{tf,yml}"
+      run: terraform-docs . && git add README.md

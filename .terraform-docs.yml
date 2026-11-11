@@ -1,0 +1,18 @@
+formatter: markdown table
+
+output:
+  file: README.md
+  mode: inject
+
+sort:
+  enabled: true
+  by: required
+
+settings:
+  # Plain markdown only: the registry sanitizes raw HTML.
+  anchor: false
+  html: false
+  default: false
+  # Show the version constraint from required_providers instead of the
+  # locally resolved version from the lock file.
+  lockfile: false
