@@ -324,7 +324,7 @@ resource "aws_lambda_function" "main" {
       error_message = "Secret values must not contain single quotes or newlines: they are written to a dotenv secret."
     }
     precondition {
-      condition     = var.image_uri == null ? true : startswith(var.image_uri,"${data.aws_caller_identity.current.account_id}.dkr.ecr.${data.aws_region.current.region}.amazonaws.com/")
+      condition     = var.image_uri == null ? true : startswith(var.image_uri, "${data.aws_caller_identity.current.account_id}.dkr.ecr.${data.aws_region.current.region}.amazonaws.com/")
       error_message = "image_uri must be an ECR image in this account and region (<account>.dkr.ecr.<region>.amazonaws.com/...): Lambda cannot run images from other registries, accounts or regions."
     }
   }
