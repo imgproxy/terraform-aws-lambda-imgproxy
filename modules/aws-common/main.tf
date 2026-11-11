@@ -128,7 +128,7 @@ resource "aws_iam_role" "task" {
       local.is_lambda ? {} : {
         Condition = {
           ArnLike = {
-            "aws:SourceArn" = "arn:aws:ecs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:*"
+            "aws:SourceArn" = "arn:aws:ecs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:*"
           }
           StringEquals = {
             "aws:SourceAccount" = data.aws_caller_identity.current.account_id

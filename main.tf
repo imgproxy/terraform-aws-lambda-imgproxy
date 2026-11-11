@@ -51,7 +51,7 @@ locals {
   platform = var.architecture == "arm64" ? "linux/arm64" : "linux/amd64"
   # A repo that is already in this account's ECR, in this region, is used as it is: nothing is
   # copied and no repository is created. Any other repo is mirrored into an ECR repository of its own.
-  repo_in_ecr = var.repo != null && startswith(var.repo, "${data.aws_caller_identity.current.account_id}.dkr.ecr.${data.aws_region.current.region}.amazonaws.com/")
+  repo_in_ecr = var.repo == null ? false : startswith(var.repo, "${data.aws_caller_identity.current.account_id}.dkr.ecr.${data.aws_region.current.region}.amazonaws.com/")
   mirror      = var.image_uri == null && !local.repo_in_ecr
   use_alias   = var.provisioned_concurrency > 0
   use_vpc     = var.vpc_id != null
