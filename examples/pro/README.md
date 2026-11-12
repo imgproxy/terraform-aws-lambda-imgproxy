@@ -8,8 +8,8 @@ See [signed](../signed/#production-setup) for the production setup.
 ## AWS setup
 
 You need an AWS account, the [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html),
-authenticated, and [crane](https://github.com/google/go-containerregistry/blob/main/cmd/crane/README.md) (the module
-copies the imgproxy image into ECR, because Lambda only runs ECR images):
+authenticated, and [Docker](https://docs.docker.com/get-docker/) (to push
+the imgproxy image into ECR, because Lambda only runs ECR images):
 
 ```bash
 aws configure
@@ -20,14 +20,11 @@ aws configure
 > `ADMIN_PROFILE_NAME` must be allowed `secretsmanager:CreateSecret`, `GetSecretValue` and `DeleteSecret` (and S3 bucket and object management for the buckets), or `aws secretsmanager create-secret` fails with `AccessDeniedException`. `PROFILE_NAME` does not need to create these secrets, but the Lambda module reads their values (`GetSecretValue`) and manages its own dotenv secret (see [Permissions](../../README.md#permissions)).
 > An `aws: [ERROR]: An error occurred (ForbiddenException) when calling the GetRoleCredentials operation: No access` error usually means the profile is missing or wrong.
 
-`jq` is also needed here: the module reads the registry credentials with it while copying the image.
-
 ## Prerequisites
 
-Create the imgproxy Pro secrets, the signing keys (see [signed](../signed/)), and a private bucket for the result
-cache. `imgproxy-pro-registry` holds the `docker.imgproxy.pro` registry credentials, passed as `repo_credentials_secret`.
-Unlike the license key it is a **JSON** secret with `username` and `password` keys. Terraform reads it on your machine
-to copy the image into ECR; the function never sees it:
+Create the imgproxy Pro license secret, the signing keys (see [signed](../signed/)), and a private bucket for the
+result cache. The `docker.imgproxy.pro` registry credentials are only used by `docker login` when you push the image (see
+Deploy), so they are not stored in Secrets Manager:
 
 ```bash
 PROFILE_NAME=my-profile # AWS CLI profile used by Terraform; see AWS setup
@@ -36,8 +33,6 @@ REGION=us-east-1
 ACCOUNT_ID=$(aws sts get-caller-identity --profile $PROFILE_NAME --query Account --output text)
 
 aws secretsmanager create-secret --profile $ADMIN_PROFILE_NAME --region $REGION --name imgproxy-pro-license --secret-string "your-license-key"
-aws secretsmanager create-secret --profile $ADMIN_PROFILE_NAME --region $REGION --name imgproxy-pro-registry \
-  --secret-string '{"username":"imgproxy","password":"your-registry-password"}'
 
 aws secretsmanager create-secret --profile $ADMIN_PROFILE_NAME --region $REGION --name imgproxy-keys --secret-string "$(openssl rand -hex 64)"
 aws secretsmanager create-secret --profile $ADMIN_PROFILE_NAME --region $REGION --name imgproxy-salts --secret-string "$(openssl rand -hex 64)"
@@ -52,6 +47,20 @@ echo "region = \"$REGION\"" > terraform.tfvars
 echo "profile = \"$PROFILE_NAME\"" >> terraform.tfvars # AWS CLI profile used by Terraform; omit for default credentials
 
 terraform init
+
+# 1. Create the ECR repository (Lambda runs ECR images only; the module does not create it)
+terraform apply -target=aws_ecr_repository.imgproxy -target=aws_ecr_repository_policy.imgproxy
+
+# 2. Push the image to it. The -arm64 tag is the single-platform build for Graviton, the default architecture
+REPO_URL=$(terraform output -raw repository_url)
+aws ecr get-login-password --profile $PROFILE_NAME --region $REGION | docker login --username AWS --password-stdin "${REPO_URL%%/*}"
+# imgproxy Pro: log in to its registry first (the username is imgproxy)
+docker login docker.imgproxy.pro --username imgproxy --password-stdin <<< "your-registry-password"
+docker pull docker.imgproxy.pro/imgproxy:v4-arm64
+docker tag docker.imgproxy.pro/imgproxy:v4-arm64 "$REPO_URL:v4"
+docker push "$REPO_URL:v4"
+
+# 3. Deploy the function
 terraform plan
 terraform apply
 ```
@@ -85,23 +94,19 @@ The processed results are stored in the cache bucket:
 aws s3 ls --profile $ADMIN_PROFILE_NAME s3://$ACCOUNT_ID-imgproxy-cache --recursive
 ```
 
-## Using your own registry
+## Using another image
 
-To use your own image instead, set `repo` (the image without tag) and `tag`; `pro = true` then only enables Pro
-features and no longer selects the image:
+The module runs whatever is in your ECR repository: push another image (your own build, or a copy of the Pro image
+from your registry) into it and set `tag`, or point at an exact image with `image_uri`:
 
 ```hcl
-repo = "registry.example.com/imgproxy-custom"
-tag  = "my-tag"
+tag = "my-tag"
+# or
+image_uri = "123456789012.dkr.ecr.us-east-1.amazonaws.com/imgproxy-pro@sha256:..."
 ```
 
-- **ECR in your account or another ECR registry**: nothing else is needed; the copy uses your AWS credentials.
-- **Any other private registry**: also set `repo_credentials_secret` to a JSON secret with `username` and `password` keys.
-- **Public images** need neither.
-- **Already in ECR** in the function's account and region: set `image_uri` and nothing is copied.
-
-The function runs on arm64 (Graviton) by default, so the image must support `linux/arm64`; otherwise set
-`architecture = "x86_64"`.
+The image must be in ECR in the function's region and single-platform. The function runs on arm64 (Graviton) by
+default, so use the `-arm64` image; for `architecture = "x86_64"` use the `-amd64` one.
 
 ## Cleanup
 
@@ -114,7 +119,6 @@ The bucket and the secrets were created with the AWS CLI, so delete them separat
 ```bash
 aws s3 rb --profile $ADMIN_PROFILE_NAME s3://$ACCOUNT_ID-imgproxy-cache --force
 aws secretsmanager delete-secret --profile $ADMIN_PROFILE_NAME --region $REGION --secret-id imgproxy-pro-license --force-delete-without-recovery
-aws secretsmanager delete-secret --profile $ADMIN_PROFILE_NAME --region $REGION --secret-id imgproxy-pro-registry --force-delete-without-recovery
 aws secretsmanager delete-secret --profile $ADMIN_PROFILE_NAME --region $REGION --secret-id imgproxy-keys --force-delete-without-recovery
 aws secretsmanager delete-secret --profile $ADMIN_PROFILE_NAME --region $REGION --secret-id imgproxy-salts --force-delete-without-recovery
 ```

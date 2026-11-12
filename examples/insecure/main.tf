@@ -26,11 +26,51 @@ provider "aws" {
   profile = var.profile
 }
 
+data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
+
+# ECR repository for the imgproxy image. The module neither creates it nor copies the image:
+# create the repository, copy the image into it (see the README), then apply the module.
+resource "aws_ecr_repository" "imgproxy" {
+  name         = "imgproxy-insecure"
+  force_delete = true
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+}
+
+# Lets the Lambda service pull the image.
+resource "aws_ecr_repository_policy" "imgproxy" {
+  repository = aws_ecr_repository.imgproxy.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "LambdaPull"
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"]
+      Condition = {
+        StringLike = {
+          "aws:sourceArn" = "arn:aws:lambda:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:function:*"
+        }
+      }
+    }]
+  })
+}
+
+output "repository_url" {
+  value       = aws_ecr_repository.imgproxy.repository_url
+  description = "ECR repository to copy the imgproxy image into"
+}
+
 module "imgproxy" {
   source  = "imgproxy/lambda-imgproxy/aws"
   version = "~> 0.1"
 
   service_name = "imgproxy-insecure"
+  repo         = aws_ecr_repository.imgproxy.repository_url
   tag          = "v4"
 
   # WARNING: Insecure mode - no request signing

@@ -40,12 +40,46 @@ data "aws_secretsmanager_secret" "pro_license" {
   name = "imgproxy-pro-license"
 }
 
-data "aws_secretsmanager_secret" "pro_registry" {
-  name = "imgproxy-pro-registry"
-}
-
 locals {
   cache_bucket = "${data.aws_caller_identity.current.account_id}-imgproxy-cache"
+}
+
+data "aws_region" "current" {}
+
+# ECR repository for the imgproxy image. The module neither creates it nor copies the image:
+# create the repository, copy the image into it (see the README), then apply the module.
+resource "aws_ecr_repository" "imgproxy" {
+  name         = "imgproxy-pro"
+  force_delete = true
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+}
+
+# Lets the Lambda service pull the image.
+resource "aws_ecr_repository_policy" "imgproxy" {
+  repository = aws_ecr_repository.imgproxy.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "LambdaPull"
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"]
+      Condition = {
+        StringLike = {
+          "aws:sourceArn" = "arn:aws:lambda:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:function:*"
+        }
+      }
+    }]
+  })
+}
+
+output "repository_url" {
+  value       = aws_ecr_repository.imgproxy.repository_url
+  description = "ECR repository to copy the imgproxy image into"
 }
 
 module "imgproxy" {
@@ -53,14 +87,9 @@ module "imgproxy" {
   version = "~> 0.1"
 
   service_name = "imgproxy-pro"
+  repo         = aws_ecr_repository.imgproxy.repository_url
   tag          = "v4"
 
-  # pro selects docker.imgproxy.pro/imgproxy as the default repo. The credentials are a JSON
-  # secret with "username" and "password" keys, which Terraform uses to mirror the image to ECR.
-  pro = true
-  repo_credentials_secret = {
-    arn = data.aws_secretsmanager_secret.pro_registry.arn
-  }
   pro_license_key_secret = {
     arn = data.aws_secretsmanager_secret.pro_license.arn
   }

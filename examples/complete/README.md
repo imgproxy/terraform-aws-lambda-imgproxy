@@ -2,12 +2,12 @@
 
 This example demonstrates a full-featured imgproxy deployment on AWS Lambda with all available features:
 
-- imgproxy Pro with license key
+- Open-source imgproxy image (imgproxy Pro with a license key and S3 result cache is optional)
 - Request signing with configurable key size
 - Source URL encryption
 - Authorization token (Bearer auth)
 - X-Ray tracing and CloudWatch metrics
-- S3 integration for source images and result cache
+- S3 integration for source images (and the result cache with Pro)
 - CloudFront CDN with a global edge cache
 - Provisioned and reserved concurrency
 - Optional VPC attachment (commented out)
@@ -18,8 +18,8 @@ This example demonstrates a full-featured imgproxy deployment on AWS Lambda with
 ## AWS setup
 
 You need an AWS account, the [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html),
-authenticated, and [crane](https://github.com/google/go-containerregistry/blob/main/cmd/crane/README.md) (the module
-copies the imgproxy image into ECR, because Lambda only runs ECR images):
+authenticated, and [Docker](https://docs.docker.com/get-docker/) (to push
+the imgproxy image into ECR, because Lambda only runs ECR images):
 
 ```bash
 aws configure
@@ -44,29 +44,32 @@ ACCOUNT_ID=$(aws sts get-caller-identity --profile $PROFILE_NAME --query Account
 aws secretsmanager create-secret --profile $ADMIN_PROFILE_NAME --region $REGION --name imgproxy-keys --secret-string "$(openssl rand -hex 64)"
 aws secretsmanager create-secret --profile $ADMIN_PROFILE_NAME --region $REGION --name imgproxy-salts --secret-string "$(openssl rand -hex 64)"
 
-# imgproxy Pro (if using pro = true); the registry secret is JSON, for docker.imgproxy.pro or for your own registry set via repo
-aws secretsmanager create-secret --profile $ADMIN_PROFILE_NAME --region $REGION --name imgproxy-pro-license --secret-string "your-license-key"
-aws secretsmanager create-secret --profile $ADMIN_PROFILE_NAME --region $REGION --name imgproxy-pro-registry \
-  --secret-string '{"username":"imgproxy","password":"your-registry-password"}'
-
 # Optional: authorization token (Bearer auth; cannot be used together with CloudFront)
 aws secretsmanager create-secret --profile $ADMIN_PROFILE_NAME --region $REGION --name imgproxy-secret --secret-string "$(openssl rand -hex 32)"
 
 # Optional: source URL encryption key
 aws secretsmanager create-secret --profile $ADMIN_PROFILE_NAME --region $REGION --name imgproxy-source-url-key --secret-string "$(openssl rand -hex 16)"
 
-# S3 buckets for source images and the result cache (not managed by Terraform)
+# S3 bucket for source images (not managed by Terraform)
 aws s3 mb --profile $ADMIN_PROFILE_NAME s3://$ACCOUNT_ID-imgproxy-complete-source --region $REGION
+```
+
+**Optional, imgproxy Pro:** the license secret and a bucket for the S3 result cache:
+
+```bash
+aws secretsmanager create-secret --profile $ADMIN_PROFILE_NAME --region $REGION --name imgproxy-pro-license --secret-string "your-license-key"
 aws s3 mb --profile $ADMIN_PROFILE_NAME s3://$ACCOUNT_ID-imgproxy-complete-cache --region $REGION
 ```
+
+Then uncomment the `pro_license_key_secret` and `cache_bucket` options, the `pro_license` data source and `cache_bucket` local, and the `IMGPROXY_CACHE_*` variables in [main.tf](main.tf).
 
 ## Deploy
 
 Everything is configured in [main.tf](main.tf); edit it to enable the commented-out options (Bearer auth, source URL
-encryption, trusted signatures, extra secrets, a custom registry or an existing ECR image, a VPC, CloudFront with a
+encryption, trusted signatures, extra secrets, an exact image URI, a VPC, CloudFront with a
 domain).
 
-See [signed](../signed/#production-setup) for the production setup. `jq` is needed to read the registry credentials.
+See [signed](../signed/#production-setup) for the production setup.
 
 1. **Deploy:**
 
@@ -75,6 +78,24 @@ echo "region = \"$REGION\"" > terraform.tfvars
 echo "profile = \"$PROFILE_NAME\"" >> terraform.tfvars # AWS CLI profile used by Terraform; omit for default credentials
 
 terraform init
+
+# 1. Create the ECR repository (Lambda runs ECR images only; the module does not create it)
+terraform apply -target=aws_ecr_repository.imgproxy -target=aws_ecr_repository_policy.imgproxy
+
+# 2. Push the image to it. The -arm64 tag is the single-platform build for Graviton, the default architecture
+REPO_URL=$(terraform output -raw repository_url)
+aws ecr get-login-password --profile $PROFILE_NAME --region $REGION | docker login --username AWS --password-stdin "${REPO_URL%%/*}"
+docker pull ghcr.io/imgproxy/imgproxy:v4-arm64
+docker tag ghcr.io/imgproxy/imgproxy:v4-arm64 "$REPO_URL:v4"
+docker push "$REPO_URL:v4"
+
+# Optional, imgproxy Pro: use its image instead (the username is imgproxy)
+# docker login docker.imgproxy.pro --username imgproxy --password-stdin <<< "your-registry-password"
+# docker pull docker.imgproxy.pro/imgproxy:v4-arm64
+# docker tag docker.imgproxy.pro/imgproxy:v4-arm64 "$REPO_URL:v4"
+# docker push "$REPO_URL:v4"
+
+# 3. Deploy the function
 terraform plan
 terraform apply
 ```
@@ -139,11 +160,12 @@ The buckets and the secrets were created with the AWS CLI, so delete them separa
 
 ```bash
 aws s3 rb --profile $ADMIN_PROFILE_NAME s3://$ACCOUNT_ID-imgproxy-complete-source --force
-aws s3 rb --profile $ADMIN_PROFILE_NAME s3://$ACCOUNT_ID-imgproxy-complete-cache --force
-aws secretsmanager delete-secret --profile $ADMIN_PROFILE_NAME --region $REGION --secret-id imgproxy-pro-license --force-delete-without-recovery
-aws secretsmanager delete-secret --profile $ADMIN_PROFILE_NAME --region $REGION --secret-id imgproxy-pro-registry --force-delete-without-recovery
 aws secretsmanager delete-secret --profile $ADMIN_PROFILE_NAME --region $REGION --secret-id imgproxy-keys --force-delete-without-recovery
 aws secretsmanager delete-secret --profile $ADMIN_PROFILE_NAME --region $REGION --secret-id imgproxy-salts --force-delete-without-recovery
 aws secretsmanager delete-secret --profile $ADMIN_PROFILE_NAME --region $REGION --secret-id imgproxy-secret --force-delete-without-recovery
 aws secretsmanager delete-secret --profile $ADMIN_PROFILE_NAME --region $REGION --secret-id imgproxy-source-url-key --force-delete-without-recovery
+
+# If you used imgproxy Pro:
+aws s3 rb --profile $ADMIN_PROFILE_NAME s3://$ACCOUNT_ID-imgproxy-complete-cache --force
+aws secretsmanager delete-secret --profile $ADMIN_PROFILE_NAME --region $REGION --secret-id imgproxy-pro-license --force-delete-without-recovery
 ```

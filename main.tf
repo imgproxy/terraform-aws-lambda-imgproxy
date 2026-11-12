@@ -1,11 +1,11 @@
 data "aws_region" "current" {}
-data "aws_caller_identity" "current" {}
 
 locals {
   function_name = coalesce(var.function_name, var.service_name)
 
-  # Image repository: `repo` when set, otherwise the default selected by `pro`
-  image_repo = var.repo != null ? var.repo : (var.pro ? "docker.imgproxy.pro/imgproxy" : "ghcr.io/imgproxy/imgproxy")
+  # imgproxy-common needs a repository to build its (unused here) image reference; the function
+  # image is resolved below from image_uri, or from repo and tag.
+  image_repo = var.repo != null ? var.repo : ""
 }
 
 module "imgproxy_common" {
@@ -48,17 +48,9 @@ locals {
     IMGPROXY_CLOUD_WATCH_REGION       = data.aws_region.current.region
   } : {}
 
-  platform = var.architecture == "arm64" ? "linux/arm64" : "linux/amd64"
-  # A repo that is already in this account's ECR, in this region, is used as it is: nothing is
-  # copied and no repository is created. Any other repo is mirrored into an ECR repository of its own.
-  repo_in_ecr = var.repo == null ? false : startswith(var.repo, "${data.aws_caller_identity.current.account_id}.dkr.ecr.${data.aws_region.current.region}.amazonaws.com/")
-  mirror      = var.image_uri == null && !local.repo_in_ecr
-  use_alias   = var.provisioned_concurrency > 0
-  use_vpc     = var.vpc_id != null
-  use_secret  = length(local.env_secret_vars) > 0
-
-  # ECR tags cannot contain ':' (digest tags become sha256-<hex>).
-  mirror_tag = replace(var.tag, ":", "-")
+  use_alias  = var.provisioned_concurrency > 0
+  use_vpc    = var.vpc_id != null
+  use_secret = length(local.env_secret_vars) > 0
 
   # CloudFront signs its requests (OAC), so the URL is IAM-protected when it is on.
   url_auth  = var.enable_cloudfront || !var.allow_public_access ? "AWS_IAM" : "NONE"
@@ -99,97 +91,33 @@ module "aws_common" {
 }
 
 # ── Container image (ECR) ─────────────────────────────────────────────────────
-# Lambda runs images from ECR only, so the upstream image is copied into a
-# repository of its own (skipped when image_uri is set, or when repo is already an ECR
-# repository in this account and region).
+# Lambda runs images from ECR only, in the function's region. The module does not create the
+# repository or copy the image: do both yourself (see the README), then set `image_uri`, or
+# `repo` (an ECR repository) and `tag`.
 
-resource "aws_ecr_repository" "main" {
-  count                = local.mirror ? 1 : 0
-  name                 = var.service_name
-  image_tag_mutability = "MUTABLE"
-  force_delete         = true
+locals {
+  # <account>.dkr.ecr.<region>.amazonaws.com/<repository> -> [account, region, repository]
+  repo_ecr = var.repo == null ? null : try(regex("^([0-9]{12})\\.dkr\\.ecr\\.([a-z0-9-]+)\\.amazonaws\\.com/(.+)$", var.repo), null)
 
-  image_scanning_configuration {
-    scan_on_push = true
-  }
-
-  tags = var.tags
-}
-
-resource "aws_ecr_lifecycle_policy" "main" {
-  count      = local.mirror ? 1 : 0
-  repository = aws_ecr_repository.main[0].name
-
-  policy = jsonencode({
-    rules = [{
-      rulePriority = 1
-      description  = "Keep the 5 most recent images"
-      selection = {
-        tagStatus   = "any"
-        countType   = "imageCountMoreThan"
-        countNumber = 5
-      }
-      action = { type = "expire" }
-    }]
-  })
-}
-
-resource "aws_ecr_repository_policy" "main" {
-  count      = local.mirror ? 1 : 0
-  repository = aws_ecr_repository.main[0].name
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Sid       = "LambdaPull"
-      Effect    = "Allow"
-      Principal = { Service = "lambda.amazonaws.com" }
-      Action    = ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"]
-      Condition = {
-        StringLike = {
-          "aws:sourceArn" = "arn:aws:lambda:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:function:*"
-        }
-      }
-    }]
-  })
-}
-
-# Needs crane, the AWS CLI (and jq with repo_credentials_secret) where Terraform runs.
-resource "terraform_data" "mirror" {
-  count = local.mirror ? 1 : 0
-
-  triggers_replace = [
-    module.imgproxy_common.image,
-    local.platform,
-    aws_ecr_repository.main[0].repository_url,
-  ]
-
-  provisioner "local-exec" {
-    command = "${path.module}/scripts/mirror-image.sh \"$SRC\" \"$DST\" \"$REGION\" \"$PLATFORM\" \"$CREDENTIALS\""
-
-    environment = {
-      SRC         = module.imgproxy_common.image
-      DST         = "${aws_ecr_repository.main[0].repository_url}:${local.mirror_tag}"
-      REGION      = data.aws_region.current.region
-      PLATFORM    = local.platform
-      CREDENTIALS = var.repo_credentials_secret != null ? var.repo_credentials_secret.arn : ""
-    }
-  }
+  # Look the tag up in ECR to run the image by digest. Skipped for image_uri, and for a repo in
+  # another region (the precondition on the function explains that case).
+  resolve_image = var.image_uri == null && local.repo_ecr != null ? local.repo_ecr[1] == data.aws_region.current.region : false
 }
 
 data "aws_ecr_image" "main" {
-  count           = local.mirror ? 1 : 0
-  repository_name = aws_ecr_repository.main[0].name
-  image_tag       = local.mirror_tag
-
-  depends_on = [terraform_data.mirror]
+  count           = local.resolve_image ? 1 : 0
+  registry_id     = local.repo_ecr[0]
+  repository_name = local.repo_ecr[2]
+  image_tag       = startswith(var.tag, "sha256:") ? null : var.tag
+  image_digest    = startswith(var.tag, "sha256:") ? var.tag : null
 }
 
 locals {
+  # null when neither image_uri nor repo is set: the precondition on the function reports it.
   image_uri = (
-    local.mirror ? "${aws_ecr_repository.main[0].repository_url}@${data.aws_ecr_image.main[0].image_digest}" :
     var.image_uri != null ? var.image_uri :
-    "${var.repo}${startswith(var.tag, "sha256:") ? "@" : ":"}${var.tag}"
+    local.resolve_image ? "${var.repo}@${data.aws_ecr_image.main[0].image_digest}" :
+    var.repo != null ? module.imgproxy_common.image : null
   )
 }
 
@@ -292,8 +220,8 @@ resource "aws_lambda_function" "main" {
 
   lifecycle {
     precondition {
-      condition     = var.image_uri != null || !var.pro || var.repo != null || var.repo_credentials_secret != null
-      error_message = "repo_credentials_secret is required when pro = true and repo is not set."
+      condition     = local.image_uri != null && can(regex("^[0-9]{12}\\.dkr\\.ecr\\.${data.aws_region.current.region}\\.amazonaws\\.com/", local.image_uri))
+      error_message = "Set image_uri, or repo and tag. The image must be in an ECR repository in the function's region (${data.aws_region.current.region}): Lambda cannot run images from other registries or regions. Copy the image into ECR and set image_uri, or repo (an ECR repository) and tag."
     }
     precondition {
       condition     = var.insecure || (var.keys_secret != null && var.salts_secret != null)
@@ -322,10 +250,6 @@ resource "aws_lambda_function" "main" {
     precondition {
       condition     = alltrue([for v in data.aws_secretsmanager_secret_version.env : !strcontains(v.secret_string, "'") && !strcontains(v.secret_string, "\n")])
       error_message = "Secret values must not contain single quotes or newlines: they are written to a dotenv secret."
-    }
-    precondition {
-      condition     = var.image_uri == null ? true : startswith(var.image_uri, "${data.aws_caller_identity.current.account_id}.dkr.ecr.${data.aws_region.current.region}.amazonaws.com/")
-      error_message = "image_uri must be an ECR image in this account and region (<account>.dkr.ecr.<region>.amazonaws.com/...): Lambda cannot run images from other registries, accounts or regions."
     }
   }
 }

@@ -1,6 +1,15 @@
-mock_provider "aws" {}
+mock_provider "aws" {
+  mock_data "aws_region" {
+    defaults = { region = "us-east-1" }
+  }
+
+  mock_data "aws_ecr_image" {
+    defaults = { image_digest = "sha256:00000000000000000000000000000000000000000000000000000000000000aa" }
+  }
+}
 
 variables {
+  image_uri = "123456789012.dkr.ecr.us-east-1.amazonaws.com/imgproxy:v4"
   keys_secret = {
     arn     = "arn:aws:secretsmanager:us-east-1:123456789012:secret:imgproxy/keys"
     version = ""
@@ -49,30 +58,6 @@ run "rejects_negative_provisioned_concurrency" {
   }
 
   expect_failures = [var.provisioned_concurrency]
-}
-
-run "rejects_pro_without_registry_credentials" {
-  command = plan
-
-  variables {
-    pro = true
-  }
-
-  expect_failures = [aws_lambda_function.main]
-}
-
-run "accepts_pro_with_custom_repo_without_credentials" {
-  command = plan
-
-  variables {
-    pro  = true
-    repo = "registry.example.com/imgproxy-pro"
-  }
-
-  assert {
-    condition     = aws_lambda_function.main.function_name == "imgproxy"
-    error_message = "pro with a custom repo must not require repo_credentials_secret"
-  }
 }
 
 run "rejects_secure_mode_without_keys" {
@@ -167,16 +152,6 @@ run "rejects_image_uri_outside_ecr" {
 run "rejects_image_uri_in_other_region" {
   command = plan
 
-  override_data {
-    target = data.aws_caller_identity.current
-    values = { account_id = "123456789012" }
-  }
-
-  override_data {
-    target = data.aws_region.current
-    values = { region = "us-east-1" }
-  }
-
   variables {
     image_uri = "123456789012.dkr.ecr.eu-west-1.amazonaws.com/imgproxy:v4"
   }
@@ -184,21 +159,46 @@ run "rejects_image_uri_in_other_region" {
   expect_failures = [aws_lambda_function.main]
 }
 
-run "rejects_image_uri_in_other_account" {
+run "accepts_image_uri_in_other_account" {
   command = plan
-
-  override_data {
-    target = data.aws_caller_identity.current
-    values = { account_id = "123456789012" }
-  }
-
-  override_data {
-    target = data.aws_region.current
-    values = { region = "us-east-1" }
-  }
 
   variables {
     image_uri = "999999999999.dkr.ecr.us-east-1.amazonaws.com/imgproxy:v4"
+  }
+
+  assert {
+    condition     = aws_lambda_function.main.image_uri == "999999999999.dkr.ecr.us-east-1.amazonaws.com/imgproxy:v4"
+    error_message = "Only the region of the image is checked"
+  }
+}
+
+run "rejects_missing_image" {
+  command = plan
+
+  variables {
+    image_uri = null
+  }
+
+  expect_failures = [aws_lambda_function.main]
+}
+
+run "rejects_repo_outside_ecr" {
+  command = plan
+
+  variables {
+    image_uri = null
+    repo      = "registry.example.com/imgproxy"
+  }
+
+  expect_failures = [aws_lambda_function.main]
+}
+
+run "rejects_repo_in_other_region" {
+  command = plan
+
+  variables {
+    image_uri = null
+    repo      = "123456789012.dkr.ecr.eu-west-1.amazonaws.com/imgproxy"
   }
 
   expect_failures = [aws_lambda_function.main]

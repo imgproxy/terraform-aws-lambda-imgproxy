@@ -23,11 +23,6 @@ output "image_uri" {
   value       = local.image_uri
 }
 
-output "repository_url" {
-  description = "URL of the ECR repository the image is mirrored to (null when image_uri is set)."
-  value       = one(aws_ecr_repository.main[*].repository_url)
-}
-
 output "role_arn" {
   description = "ARN of the IAM role used by the function at runtime."
   value       = module.aws_common.task_role_arn

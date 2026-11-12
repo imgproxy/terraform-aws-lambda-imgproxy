@@ -5,8 +5,8 @@ Production imgproxy with request signing, so only URLs signed with your key and 
 ## AWS setup
 
 You need an AWS account, the [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html),
-authenticated, and [crane](https://github.com/google/go-containerregistry/blob/main/cmd/crane/README.md) (the module
-copies the imgproxy image into ECR, because Lambda only runs ECR images):
+authenticated, and [Docker](https://docs.docker.com/get-docker/) (to push
+the imgproxy image into ECR, because Lambda only runs ECR images):
 
 ```bash
 aws configure
@@ -37,6 +37,18 @@ echo "region = \"$REGION\"" > terraform.tfvars
 echo "profile = \"$PROFILE_NAME\"" >> terraform.tfvars # AWS CLI profile used by Terraform; omit for default credentials
 
 terraform init
+
+# 1. Create the ECR repository (Lambda runs ECR images only; the module does not create it)
+terraform apply -target=aws_ecr_repository.imgproxy -target=aws_ecr_repository_policy.imgproxy
+
+# 2. Push the image to it. The -arm64 tag is the single-platform build for Graviton, the default architecture
+REPO_URL=$(terraform output -raw repository_url)
+aws ecr get-login-password --profile $PROFILE_NAME --region $REGION | docker login --username AWS --password-stdin "${REPO_URL%%/*}"
+docker pull ghcr.io/imgproxy/imgproxy:v4-arm64
+docker tag ghcr.io/imgproxy/imgproxy:v4-arm64 "$REPO_URL:v4"
+docker push "$REPO_URL:v4"
+
+# 3. Deploy the function
 terraform plan
 terraform apply
 ```
@@ -77,7 +89,8 @@ For production:
   Attach it with `vpc_id` and `subnet_ids` only to reach private resources, and give the subnets a **NAT gateway**
   (imgproxy fetches source images from the internet) or VPC endpoints for S3 and Secrets Manager. Add rules through
   the `security_group_id` output.
-- **Pin the image tag** (a version or a `sha256:` digest), because the image is copied into ECR only when the tag changes.
+- **Pin the image tag** (a version or a `sha256:` digest): the function runs the image behind the tag in your ECR
+  repository, so a new imgproxy release is deployed only when you copy it there and change `tag`.
 
 The other examples keep the defaults for brevity; the same settings apply to all of them.
 

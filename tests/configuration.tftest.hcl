@@ -1,6 +1,15 @@
-mock_provider "aws" {}
+mock_provider "aws" {
+  mock_data "aws_region" {
+    defaults = { region = "us-east-1" }
+  }
+
+  mock_data "aws_ecr_image" {
+    defaults = { image_digest = "sha256:00000000000000000000000000000000000000000000000000000000000000aa" }
+  }
+}
 
 variables {
+  image_uri = "123456789012.dkr.ecr.us-east-1.amazonaws.com/imgproxy:v4"
   keys_secret = {
     arn     = "arn:aws:secretsmanager:us-east-1:123456789012:secret:imgproxy/keys"
     version = ""
@@ -8,95 +17,6 @@ variables {
   salts_secret = {
     arn     = "arn:aws:secretsmanager:us-east-1:123456789012:secret:imgproxy/salts"
     version = ""
-  }
-}
-
-run "pro_image_with_credentials" {
-  command = plan
-
-  variables {
-    pro = true
-    repo_credentials_secret = {
-      arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:imgproxy/registry"
-    }
-  }
-
-  assert {
-    condition     = terraform_data.mirror[0].triggers_replace[0] == "docker.imgproxy.pro/imgproxy:v4"
-    error_message = "pro = true must mirror the Pro image"
-  }
-}
-
-run "custom_repo_and_tag" {
-  command = plan
-
-  variables {
-    repo = "registry.example.com/imgproxy"
-    tag  = "v3.30"
-  }
-
-  assert {
-    condition     = terraform_data.mirror[0].triggers_replace[0] == "registry.example.com/imgproxy:v3.30"
-    error_message = "repo and tag must form the mirror source"
-  }
-}
-
-run "digest_tag_is_valid_ecr_tag" {
-  command = plan
-
-  variables {
-    tag = "sha256:0123456789abcdef"
-  }
-
-  assert {
-    condition     = terraform_data.mirror[0].triggers_replace[0] == "ghcr.io/imgproxy/imgproxy@sha256:0123456789abcdef"
-    error_message = "A sha256 tag must be referenced by digest"
-  }
-
-  assert {
-    condition     = data.aws_ecr_image.main[0].image_tag == "sha256-0123456789abcdef"
-    error_message = "ECR tags cannot contain a colon"
-  }
-}
-
-run "image_uri_skips_mirroring" {
-  command = plan
-
-  override_data {
-    target = data.aws_caller_identity.current
-    values = { account_id = "123456789012" }
-  }
-
-  override_data {
-    target = data.aws_region.current
-    values = { region = "us-east-1" }
-  }
-
-  variables {
-    image_uri = "123456789012.dkr.ecr.us-east-1.amazonaws.com/imgproxy@sha256:0123456789abcdef"
-  }
-
-  assert {
-    condition     = length(aws_ecr_repository.main) == 0 && length(terraform_data.mirror) == 0
-    error_message = "image_uri must skip the ECR repository and mirroring"
-  }
-
-  assert {
-    condition     = aws_lambda_function.main.image_uri == "123456789012.dkr.ecr.us-east-1.amazonaws.com/imgproxy@sha256:0123456789abcdef"
-    error_message = "The function must run image_uri"
-  }
-}
-
-run "x86_64_mirrors_amd64" {
-  command = plan
-
-  variables {
-    architecture = "x86_64"
-  }
-
-  assert {
-    condition     = terraform_data.mirror[0].triggers_replace[1] == "linux/amd64"
-    error_message = "x86_64 must mirror the linux/amd64 image"
   }
 }
 
@@ -275,79 +195,55 @@ run "reserved_concurrency" {
   }
 }
 
-run "ecr_repo_in_account_skips_mirroring" {
+run "image_uri_is_used_as_given" {
   command = plan
 
-  override_data {
-    target = data.aws_caller_identity.current
-    values = { account_id = "123456789012" }
-  }
-
-  override_data {
-    target = data.aws_region.current
-    values = { region = "us-east-1" }
-  }
-
   variables {
-    repo = "123456789012.dkr.ecr.us-east-1.amazonaws.com/my-imgproxy"
-    tag  = "v4"
+    image_uri = "123456789012.dkr.ecr.us-east-1.amazonaws.com/imgproxy@sha256:0123456789abcdef"
   }
 
   assert {
-    condition     = length(aws_ecr_repository.main) == 0 && length(terraform_data.mirror) == 0
-    error_message = "A repo that is already in this account's ECR must not be mirrored"
+    condition     = aws_lambda_function.main.image_uri == "123456789012.dkr.ecr.us-east-1.amazonaws.com/imgproxy@sha256:0123456789abcdef"
+    error_message = "The function must run image_uri"
   }
 
   assert {
-    condition     = aws_lambda_function.main.image_uri == "123456789012.dkr.ecr.us-east-1.amazonaws.com/my-imgproxy:v4"
-    error_message = "The function must use repo:tag directly"
+    condition     = length(data.aws_ecr_image.main) == 0
+    error_message = "image_uri must not be looked up"
   }
 }
 
-run "ecr_repo_with_digest_uses_digest_reference" {
+run "repo_and_tag_run_by_digest" {
   command = plan
 
-  override_data {
-    target = data.aws_caller_identity.current
-    values = { account_id = "123456789012" }
-  }
-
-  override_data {
-    target = data.aws_region.current
-    values = { region = "us-east-1" }
-  }
-
   variables {
-    repo = "123456789012.dkr.ecr.us-east-1.amazonaws.com/my-imgproxy"
-    tag  = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    image_uri = null
+    repo      = "123456789012.dkr.ecr.us-east-1.amazonaws.com/my-imgproxy"
+    tag       = "v3.30"
   }
 
   assert {
-    condition     = aws_lambda_function.main.image_uri == "123456789012.dkr.ecr.us-east-1.amazonaws.com/my-imgproxy@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-    error_message = "A digest tag must be referenced with @"
+    condition     = data.aws_ecr_image.main[0].registry_id == "123456789012" && data.aws_ecr_image.main[0].repository_name == "my-imgproxy" && data.aws_ecr_image.main[0].image_tag == "v3.30"
+    error_message = "The tag must be looked up in the repo's ECR repository"
+  }
+
+  assert {
+    condition     = aws_lambda_function.main.image_uri == "123456789012.dkr.ecr.us-east-1.amazonaws.com/my-imgproxy@sha256:00000000000000000000000000000000000000000000000000000000000000aa"
+    error_message = "The function must run the image by digest"
   }
 }
 
-run "ecr_repo_in_other_region_is_still_mirrored" {
+run "digest_tag_is_looked_up_by_digest" {
   command = plan
 
-  override_data {
-    target = data.aws_caller_identity.current
-    values = { account_id = "123456789012" }
-  }
-
-  override_data {
-    target = data.aws_region.current
-    values = { region = "us-east-1" }
-  }
-
   variables {
-    repo = "123456789012.dkr.ecr.eu-west-1.amazonaws.com/my-imgproxy"
-    tag  = "v4"
+    image_uri = null
+    repo      = "123456789012.dkr.ecr.us-east-1.amazonaws.com/my-imgproxy"
+    tag       = "sha256:0123456789abcdef"
   }
 
   assert {
-    condition     = length(terraform_data.mirror) == 1
-    error_message = "An ECR repo in another region cannot be used by the function and must be mirrored"
+    condition     = data.aws_ecr_image.main[0].image_digest == "sha256:0123456789abcdef"
+    error_message = "A sha256 tag must be looked up by digest"
   }
 }

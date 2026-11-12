@@ -1,6 +1,15 @@
-mock_provider "aws" {}
+mock_provider "aws" {
+  mock_data "aws_region" {
+    defaults = { region = "us-east-1" }
+  }
+
+  mock_data "aws_ecr_image" {
+    defaults = { image_digest = "sha256:00000000000000000000000000000000000000000000000000000000000000aa" }
+  }
+}
 
 variables {
+  image_uri = "123456789012.dkr.ecr.us-east-1.amazonaws.com/imgproxy:v4"
   keys_secret = {
     arn     = "arn:aws:secretsmanager:us-east-1:123456789012:secret:imgproxy/keys"
     version = ""
@@ -41,11 +50,6 @@ run "custom_service_name_propagates" {
     condition     = module.aws_common.log_group_name == "/aws/lambda/myapp"
     error_message = "Log group name must use service_name"
   }
-
-  assert {
-    condition     = aws_ecr_repository.main[0].name == "myapp"
-    error_message = "ECR repository name must reflect service_name"
-  }
 }
 
 run "container_image_package" {
@@ -81,17 +85,12 @@ run "default_sizing" {
   }
 }
 
-run "community_image_is_mirrored" {
+run "image_uri_is_the_function_image" {
   command = plan
 
   assert {
-    condition     = terraform_data.mirror[0].triggers_replace[0] == "ghcr.io/imgproxy/imgproxy:v4"
-    error_message = "The community image must be the default mirror source"
-  }
-
-  assert {
-    condition     = length(aws_ecr_repository.main) == 1
-    error_message = "An ECR repository must be created"
+    condition     = aws_lambda_function.main.image_uri == "123456789012.dkr.ecr.us-east-1.amazonaws.com/imgproxy:v4"
+    error_message = "The function must run image_uri as given"
   }
 }
 
@@ -163,10 +162,5 @@ run "custom_function_name" {
   assert {
     condition     = module.aws_common.log_group_name == "/aws/lambda/myapp-images"
     error_message = "Log group must follow function_name"
-  }
-
-  assert {
-    condition     = aws_ecr_repository.main[0].name == "myapp"
-    error_message = "Other resources must keep using service_name"
   }
 }

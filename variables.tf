@@ -20,27 +20,19 @@ variable "function_name" {
 variable "tag" {
   type        = string
   default     = "v4"
-  description = "imgproxy image tag (version). Pin a version or a sha256: digest: the image is mirrored to ECR when the tag changes, not when the upstream tag moves."
+  description = "imgproxy image tag (version) in the ECR repository given by 'repo'. Pin a version or a sha256: digest. The function runs the image by digest, so pushing a new image under the same tag and applying again redeploys it. Ignored when image_uri is set."
 }
 
 variable "repo" {
   type        = string
   default     = null
-  description = "Container repository to mirror imgproxy from, without tag (e.g. 'registry.example.com/imgproxy'). When null, 'pro' selects docker.imgproxy.pro/imgproxy or ghcr.io/imgproxy/imgproxy. Lambda can only run images stored in ECR, so the image is copied into an ECR repository created by this module, unless repo is already an ECR repository of this account and region (<account>.dkr.ecr.<region>.amazonaws.com/...): then it is used as it is and nothing is copied. Such an image must be a single-platform image for the function's architecture, and the repository must allow Lambda to pull it (see the README)."
-}
-
-variable "repo_credentials_secret" {
-  type = object({
-    arn = string
-  })
-  default     = null
-  description = "Secrets Manager secret with the credentials for the registry in 'repo' (or docker.imgproxy.pro when 'repo' is not set). Must be a JSON secret with 'username' and 'password' keys. Required when pro = true and repo is not set. Read by the machine running Terraform while mirroring the image, not by the function."
+  description = "ECR repository that holds the imgproxy image, without tag: <account>.dkr.ecr.<region>.amazonaws.com/<name>. Lambda runs only ECR images from the function's region, and this module neither creates the repository nor copies the image: do both yourself (see the README). The image must be single-platform for the function's architecture, and the repository must allow lambda.amazonaws.com to pull it. Set this (with 'tag') or image_uri."
 }
 
 variable "image_uri" {
   type        = string
   default     = null
-  description = "URI of an image that is already in ECR, in the same account and region. When set, nothing is mirrored and repo, tag, pro and repo_credentials_secret are ignored. Use it when the image is mirrored outside Terraform, or to pin an exact digest."
+  description = "Full URI of the image in ECR, in the function's region (<account>.dkr.ecr.<region>.amazonaws.com/<name>:<tag> or @sha256:<digest>). Used as it is; repo and tag are ignored. Use it to pin an exact digest or when the repository is in another account."
 }
 
 variable "environment" {
@@ -128,7 +120,7 @@ variable "source_url_encryption_key_secret" {
 variable "architecture" {
   type        = string
   default     = "arm64"
-  description = "Instruction set architecture of the function. arm64 (Graviton) is recommended: lower cost, same performance. The matching image platform is mirrored."
+  description = "Instruction set architecture of the function. arm64 (Graviton) is recommended: lower cost, same performance. The image you copy into ECR must be built for this architecture."
 
   validation {
     condition     = contains(["arm64", "x86_64"], var.architecture)
@@ -215,12 +207,6 @@ variable "provisioned_concurrency" {
 }
 
 # ── imgproxy Pro ──────────────────────────────────────────────────────────────
-
-variable "pro" {
-  type        = bool
-  default     = false
-  description = "Use imgproxy Pro (docker.imgproxy.pro) instead of the community image (ghcr.io) as the default repo. Has no effect when repo or image_uri is set."
-}
 
 variable "pro_license_key_secret" {
   type = object({

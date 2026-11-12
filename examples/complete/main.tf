@@ -36,15 +36,10 @@ data "aws_secretsmanager_secret" "salts" {
   name = "imgproxy-salts"
 }
 
-data "aws_secretsmanager_secret" "pro_license" {
-  name = "imgproxy-pro-license"
-}
-
-data "aws_secretsmanager_secret" "pro_registry" {
-  name = "imgproxy-pro-registry"
-}
-
 # Optional secrets, used by the commented-out options below
+# data "aws_secretsmanager_secret" "pro_license" {
+#   name = "imgproxy-pro-license"
+# }
 # data "aws_secretsmanager_secret" "secret" {
 #   name = "imgproxy-secret"
 # }
@@ -54,14 +49,54 @@ data "aws_secretsmanager_secret" "pro_registry" {
 
 locals {
   source_bucket = "${data.aws_caller_identity.current.account_id}-imgproxy-complete-source"
-  cache_bucket  = "${data.aws_caller_identity.current.account_id}-imgproxy-complete-cache"
+  # imgproxy Pro only: S3 result cache bucket
+  # cache_bucket = "${data.aws_caller_identity.current.account_id}-imgproxy-complete-cache"
+}
+
+data "aws_region" "current" {}
+
+# ECR repository for the imgproxy image. The module neither creates it nor copies the image:
+# create the repository, copy the image into it (see the README), then apply the module.
+resource "aws_ecr_repository" "imgproxy" {
+  name         = "imgproxy-tmp"
+  force_delete = true
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+}
+
+# Lets the Lambda service pull the image.
+resource "aws_ecr_repository_policy" "imgproxy" {
+  repository = aws_ecr_repository.imgproxy.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "LambdaPull"
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"]
+      Condition = {
+        StringLike = {
+          "aws:sourceArn" = "arn:aws:lambda:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:function:*"
+        }
+      }
+    }]
+  })
+}
+
+output "repository_url" {
+  value       = aws_ecr_repository.imgproxy.repository_url
+  description = "ECR repository to copy the imgproxy image into"
 }
 
 module "imgproxy" {
   source  = "imgproxy/lambda-imgproxy/aws"
   version = "~> 0.1"
 
-  service_name = "imgproxy"
+  service_name = "imgproxy-dev"
+  repo         = aws_ecr_repository.imgproxy.repository_url
   tag          = "v4"
 
   # Security: request signing
@@ -83,20 +118,12 @@ module "imgproxy" {
   #   arn = data.aws_secretsmanager_secret.source_url_key.arn
   # }
 
-  # imgproxy Pro. The registry credentials are a JSON secret with "username" and "password" keys.
-  pro = true
-  repo_credentials_secret = {
-    arn = data.aws_secretsmanager_secret.pro_registry.arn
-  }
-  pro_license_key_secret = {
-    arn = data.aws_secretsmanager_secret.pro_license.arn
-  }
+  # Optional: imgproxy Pro (the image comes from docker.imgproxy.pro; see the README)
+  # pro_license_key_secret = {
+  #   arn = data.aws_secretsmanager_secret.pro_license.arn
+  # }
 
-  # Optional: mirror from your own registry instead (pro then no longer affects the image).
-  # Registries other than ECR need repo_credentials_secret.
-  # repo = "registry.example.com/imgproxy-custom"
-
-  # Optional: skip mirroring and run an image you already pushed to ECR in this account and region
+  # Optional: run an exact image (e.g. a digest, or a repository in another account) instead of repo and tag
   # image_uri = "123456789012.dkr.ecr.us-east-1.amazonaws.com/imgproxy@sha256:..."
 
   # Optional: trusted signatures (Pro only)
@@ -110,9 +137,11 @@ module "imgproxy" {
   #   IMGPROXY_SENTRY_DSN    = { arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:sentry-dsn-AbCdEf", version = "3" }
   # }
 
-  # Existing buckets (see README): source images and result cache (Pro)
+  # Existing bucket (see README) with source images
   source_buckets = [local.source_bucket]
-  cache_bucket   = local.cache_bucket
+
+  # Optional: existing bucket for the result cache (imgproxy Pro only; also uncomment the IMGPROXY_CACHE_* variables below)
+  # cache_bucket = local.cache_bucket
 
   # Monitoring: X-Ray tracing and imgproxy CloudWatch metrics
   enable_monitoring = true
@@ -156,8 +185,9 @@ module "imgproxy" {
     IMGPROXY_MAX_SRC_RESOLUTION = "50.0"
     IMGPROXY_JPEG_PROGRESSIVE   = "true"
     IMGPROXY_S3_REGION          = var.region
-    IMGPROXY_CACHE_USE          = "s3"
-    IMGPROXY_CACHE_BUCKET       = local.cache_bucket
+    # imgproxy Pro only: S3 result cache
+    # IMGPROXY_CACHE_USE          = "s3"
+    # IMGPROXY_CACHE_BUCKET       = local.cache_bucket
   }
 }
 
