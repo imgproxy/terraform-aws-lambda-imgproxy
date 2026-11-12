@@ -33,7 +33,8 @@ module "imgproxy" {
 
 Requires Terraform >= 1.5, AWS provider >= 6.28 and a deployer with [sufficient permissions](#permissions).
 
-> [!CAUTION] Lambda only runs images from ECR in the function's region, so before applying you
+> [!CAUTION]
+> Lambda only runs images from ECR in the function's region, so before applying you
 > need an ECR repository that holds the image ([Image delivery](#image-delivery)).
 > Docker is needed only to push the image, not by the module.
 
