@@ -19,8 +19,7 @@ aws configure
 # or: aws sso login --profile my-profile && export AWS_PROFILE=my-profile
 ```
 
-> The `aws` commands below use `--profile $PROFILE_NAME`, set at the start of Prerequisites: use your profile, or drop the flag if you use the default credentials.
-> An `aws: [ERROR]: An error occurred (ForbiddenException) when calling the GetRoleCredentials operation: No access` error usually means the profile is missing or wrong.
+> Commands use `--profile $PROFILE_NAME`; drop the flag to use default credentials. A `GetRoleCredentials ... No access` error means the profile is missing or wrong.
 
 ## Prerequisites
 

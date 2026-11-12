@@ -15,9 +15,7 @@ aws configure
 # or: aws sso login --profile my-profile && export AWS_PROFILE=my-profile
 ```
 
-> The `aws` commands below use two profiles, set at the start of Prerequisites: `PROFILE_NAME` is the one Terraform uses, and `ADMIN_PROFILE_NAME` creates, reads and deletes the Secrets Manager secrets and the S3 buckets. They may be the same or different; drop the flags if you use the default credentials.
-> `ADMIN_PROFILE_NAME` must be allowed `secretsmanager:CreateSecret`, `GetSecretValue` and `DeleteSecret`, or `aws secretsmanager create-secret` fails with `AccessDeniedException`. `PROFILE_NAME` does not need to create these secrets, but the Lambda module reads their values (`GetSecretValue`) and manages its own dotenv secret (see [Permissions](../../README.md#permissions)).
-> An `aws: [ERROR]: An error occurred (ForbiddenException) when calling the GetRoleCredentials operation: No access` error usually means the profile is missing or wrong.
+> Commands use two profiles: `PROFILE_NAME` (used by Terraform) and `ADMIN_PROFILE_NAME` (creates the secrets and buckets). They may be the same; drop `--profile` to use default credentials. The admin profile needs Secrets Manager create/read/delete access (plus S3 where buckets are created); see [Permissions](../../README.md#permissions). A `GetRoleCredentials ... No access` error means the profile is missing or wrong.
 
 ## Prerequisites
 

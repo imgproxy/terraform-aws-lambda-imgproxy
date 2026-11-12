@@ -12,7 +12,7 @@ Terraform module to deploy [imgproxy](https://imgproxy.net/) on AWS Lambda as a 
 - CloudFront distribution (optional), with the Function URL locked to it
 - X-Ray tracing and CloudWatch metrics (optional)
 
-Also supported: request signing, imgproxy Pro, S3 as image source and result cache (Pro). Secure by default ([details](#secure-defaults)).
+Also supported: request signing, imgproxy Pro (use the Pro image, see [Image delivery](#image-delivery)), S3 as image source and result cache (Pro). Secure by default ([details](#secure-defaults)).
 
 ## Usage
 
@@ -54,7 +54,7 @@ The Function URL is public by default. `allow_public_access = false` makes it IA
 
 ### Permissions
 
-The deployer needs permissions for Lambda, ECR, Secrets Manager, CloudWatch log groups, CloudFront and, with a VPC, EC2 networking. Two example policies are provided. Replace `123456789012` with your account ID. Statements match names starting with `imgproxy`; if your `service_name` differs, change the prefix everywhere (the module names its role `<service_name>-function-*` and its dotenv secret `<service_name>-env-*`; the examples name the ECR repository `<service_name>`).
+The deployer needs permissions for Lambda, ECR, Secrets Manager, CloudWatch log groups, CloudFront and, with a VPC, EC2 networking. Two example policies are provided. Replace `123456789012` with your account ID. Statements match names starting with `imgproxy`; if your `service_name` differs, change the prefix (the module names its role `<service_name>-function-*` and its dotenv secret `<service_name>-env-*`).
 
 - [example-permission-set.json](example-permission-set.json): the module creates the function role, so the deployer needs IAM access limited to `imgproxy*-function-*` roles. Treat this identity as privileged.
 - [example-permission-set-existing-roles.json](example-permission-set-existing-roles.json): you pass your own `role_arn`; the deployer needs only `iam:PassRole` on it. The role needs logging, secrets access and, with a VPC, the VPC access policy.
@@ -63,10 +63,10 @@ Notes:
 
 - `ReadSecretValues` allows `secretsmanager:GetSecretValue` on secrets named `imgproxy*`. Narrow it to the secrets you pass.
 - Drop the EC2 statements if you use no VPC.
-- `EcrLogin` and `EcrRepository` cover what the examples do with the same identity: create the ECR repository and its policy, and push the image (`docker login` needs `ecr:GetAuthorizationToken`). The module itself only needs to read the image: `ecr:DescribeImages` (it looks the tag up), and `ecr:BatchGetImage` and `ecr:GetDownloadUrlForLayer`, which Lambda checks when it creates the function. If your repository is managed elsewhere, reduce the statement to those three actions and match its resource to your repository's name.
+- `EcrLogin` and `EcrRepository` cover what the examples do: create the repository and its policy, and push the image. The module itself only needs `ecr:DescribeImages`, `ecr:BatchGetImage` and `ecr:GetDownloadUrlForLayer`; if the repository is managed elsewhere, reduce the statement to those.
 - With `cdn_waf_web_acl_id`, add the WAF read permissions your account requires.
 
-The policies were checked against the module's resources but not applied to a real AWS account; adjust them if an apply fails with `AccessDenied`.
+The policies were not applied to a real AWS account; adjust them if an apply fails with `AccessDenied`.
 
 ### Networking
 
@@ -143,7 +143,18 @@ docker tag ghcr.io/imgproxy/imgproxy:v4-arm64 $REGISTRY/imgproxy:v4
 docker push $REGISTRY/imgproxy:v4
 ```
 
-For imgproxy Pro, run `docker login docker.imgproxy.pro --username imgproxy` first and pull `docker.imgproxy.pro/imgproxy:v4-arm64`. Lambda rejects multi-platform indexes, so push a single-platform image: check with `docker buildx imagetools inspect <image>` if you built the image yourself.
+**imgproxy Pro:** use the Pro image instead. Log in to its registry first (the username is `imgproxy`, the password is your Pro registry credential), then pull, tag and push the same way, and pass the license key with `pro_license_key_secret` ([pro example](examples/pro/)):
+
+```bash
+docker login docker.imgproxy.pro --username imgproxy
+docker pull docker.imgproxy.pro/imgproxy:v4-arm64   # -amd64 with architecture = "x86_64"
+docker tag docker.imgproxy.pro/imgproxy:v4-arm64 $REGISTRY/imgproxy:v4
+docker push $REGISTRY/imgproxy:v4
+```
+
+Pro-only inputs (`pro_license_key_secret`, `cache_bucket`, `trusted_signatures_secret`) need the Pro image; the free image ignores or rejects them.
+
+Lambda rejects multi-platform indexes, so push a single-platform image: check with `docker buildx imagetools inspect <image>` if you built the image yourself.
 
 **3. Point the module at it:**
 
