@@ -58,7 +58,7 @@ data "aws_region" "current" {}
 # ECR repository for the imgproxy image. The module neither creates it nor copies the image:
 # create the repository, copy the image into it (see the README), then apply the module.
 resource "aws_ecr_repository" "imgproxy" {
-  name         = "imgproxy-tmp"
+  name         = "imgproxy"
   force_delete = true
 
   image_scanning_configuration {
@@ -95,7 +95,7 @@ module "imgproxy" {
   source  = "imgproxy/lambda-imgproxy/aws"
   version = "~> 0.1"
 
-  service_name = "imgproxy-dev"
+  service_name = "imgproxy"
   repo         = aws_ecr_repository.imgproxy.repository_url
   tag          = "v4"
 
