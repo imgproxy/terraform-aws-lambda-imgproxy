@@ -26,6 +26,7 @@ aws configure
 # or: aws sso login --profile my-profile && export AWS_PROFILE=my-profile
 ```
 
+> [!NOTE]
 > - `PROFILE_NAME` is used by Terraform; `ADMIN_PROFILE_NAME` creates the secrets and buckets. They may be the same; drop `--profile` to use default credentials.
 > - The admin profile needs Secrets Manager create/read/delete access (plus S3 where buckets are created); see [Permissions](../../README.md#permissions).
 > - A `GetRoleCredentials ... No access` error means the profile is missing or wrong.

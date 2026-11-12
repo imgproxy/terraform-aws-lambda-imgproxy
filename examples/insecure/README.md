@@ -19,6 +19,7 @@ aws configure
 # or: aws sso login --profile my-profile && export AWS_PROFILE=my-profile
 ```
 
+> [!NOTE]
 > Commands use `--profile $PROFILE_NAME`; drop the flag to use default credentials. A `GetRoleCredentials ... No access` error means the profile is missing or wrong.
 
 ## Prerequisites
