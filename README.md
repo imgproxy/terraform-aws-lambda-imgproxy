@@ -97,19 +97,6 @@ Lambda runs only ECR images, from the function's own region. The module does not
 resource "aws_ecr_repository" "imgproxy" {
   name = "imgproxy"
 }
-
-resource "aws_ecr_lifecycle_policy" "imgproxy" {
-  repository = aws_ecr_repository.imgproxy.name
-
-  policy = jsonencode({
-    rules = [{
-      rulePriority = 1
-      description  = "Keep the 5 most recent images"
-      selection    = { tagStatus = "any", countType = "imageCountMoreThan", countNumber = 5 }
-      action       = { type = "expire" }
-    }]
-  })
-}
 ```
 
 Provision it before anything else: the repository must exist (`terraform apply -target=aws_ecr_repository.imgproxy`, or a separate configuration) before you push the image or create the function.
@@ -130,7 +117,7 @@ docker push $REGISTRY/imgproxy:v4
 REGISTRY=123456789012.dkr.ecr.us-east-1.amazonaws.com
 aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $REGISTRY
 docker login docker.imgproxy.pro --username imgproxy
-docker pull docker.imgproxy.pro/imgproxy:v4-arm64   # -amd64 with architecture = "x86_64"
+docker pull docker.imgproxy.pro/imgproxy:v4-arm64
 docker tag docker.imgproxy.pro/imgproxy:v4-arm64 $REGISTRY/imgproxy:v4
 docker push $REGISTRY/imgproxy:v4
 ```
@@ -147,7 +134,8 @@ module "imgproxy" {
   repo = aws_ecr_repository.imgproxy.repository_url
   tag  = "v4" # a version or a sha256: digest
 
-  # Or set image_uri (full URI, used as is; repo and tag are then ignored), e.g. for a repository in another account.
+  # Or set image_uri (full URI, used as is; repo and tag are then ignored), e.g.
+  # for a repository in another account. In this case, you also need to apply permissions.
 }
 ```
 
