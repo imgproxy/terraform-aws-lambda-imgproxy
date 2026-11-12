@@ -161,12 +161,6 @@ variable "function_timeout" {
   }
 }
 
-variable "workers" {
-  type        = number
-  default     = null
-  description = "Number of concurrent requests per function instance. Sets IMGPROXY_WORKERS. Defaults to 1: Lambda hands one request at a time to each instance."
-}
-
 variable "timeout" {
   type        = number
   default     = null

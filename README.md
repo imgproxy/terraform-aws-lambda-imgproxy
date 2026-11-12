@@ -23,15 +23,19 @@ module "imgproxy" {
 
   service_name = "imgproxy"
 
+  repo = "123456789012.dkr.ecr.us-east-1.amazonaws.com/imgproxy" # your ECR repository, see Image delivery
+  tag  = "v4"
+
   keys_secret  = { arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:imgproxy-keys-AbCdEf" }
   salts_secret = { arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:imgproxy-salts-AbCdEf" }
-
-  enable_cloudfront       = true # the Function URL then accepts only CloudFront
-  provisioned_concurrency = 2    # keep two instances warm
 }
 ```
 
-Requires Terraform >= 1.5, AWS provider >= 6.28 and a deployer with [sufficient permissions](#permissions). Lambda only runs images from ECR in the function's region, so before applying you need an ECR repository that holds the image ([Image delivery](#image-delivery)); Docker is needed only to push the image, not by the module. The module creates no networking.
+Requires Terraform >= 1.5, AWS provider >= 6.28 and a deployer with [sufficient permissions](#permissions).
+
+> [!CAUTION] Lambda only runs images from ECR in the function's region, so before applying you
+> need an ECR repository that holds the image ([Image delivery](#image-delivery)).
+> Docker is needed only to push the image, not by the module.
 
 ## Examples
 
@@ -86,18 +90,11 @@ secrets = {
 
 Lambda runs only ECR images, from the function's own region. The module does not create the repository or copy the image: you do both, so nothing happens implicitly during `apply`. The module then runs the image you point it at, by digest.
 
-**1. Define the repository** in your own configuration, with a policy that lets Lambda pull the image:
+**1. Define the repository** in your own configuration:
 
 ```hcl
-data "aws_caller_identity" "current" {}
-data "aws_region" "current" {}
-
 resource "aws_ecr_repository" "imgproxy" {
   name = "imgproxy"
-
-  image_scanning_configuration {
-    scan_on_push = true
-  }
 }
 
 resource "aws_ecr_lifecycle_policy" "imgproxy" {
@@ -112,28 +109,9 @@ resource "aws_ecr_lifecycle_policy" "imgproxy" {
     }]
   })
 }
-
-resource "aws_ecr_repository_policy" "imgproxy" {
-  repository = aws_ecr_repository.imgproxy.name
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Sid       = "LambdaPull"
-      Effect    = "Allow"
-      Principal = { Service = "lambda.amazonaws.com" }
-      Action    = ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"]
-      Condition = {
-        StringLike = {
-          "aws:sourceArn" = "arn:aws:lambda:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:function:*"
-        }
-      }
-    }]
-  })
-}
 ```
 
-Provision it before anything else: the repository and its policy must exist (`terraform apply -target=aws_ecr_repository.imgproxy -target=aws_ecr_repository_policy.imgproxy`, or a separate configuration) before you push the image or create the function.
+Provision it before anything else: the repository must exist (`terraform apply -target=aws_ecr_repository.imgproxy`, or a separate configuration) before you push the image or create the function.
 
 **2. Push the image** to it. imgproxy publishes single-platform images with an architecture suffix, so pull the one for the function's architecture (`-arm64` by default, `-amd64` with `architecture = "x86_64"`), tag it for your repository and push it. The official image `ghcr.io/imgproxy/imgproxy` bundles the Lambda Web Adapter:
 
@@ -148,6 +126,8 @@ docker push $REGISTRY/imgproxy:v4
 **imgproxy Pro:** use the Pro image instead. Log in to its registry first (the username is `imgproxy`, the password is your Pro registry credential), then pull, tag and push the same way, and pass the license key with `pro_license_key_secret` ([pro example](examples/pro/)):
 
 ```bash
+REGISTRY=123456789012.dkr.ecr.us-east-1.amazonaws.com
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $REGISTRY
 docker login docker.imgproxy.pro --username imgproxy
 docker pull docker.imgproxy.pro/imgproxy:v4-arm64   # -amd64 with architecture = "x86_64"
 docker tag docker.imgproxy.pro/imgproxy:v4-arm64 $REGISTRY/imgproxy:v4
@@ -165,17 +145,14 @@ module "imgproxy" {
   # ...
   repo = aws_ecr_repository.imgproxy.repository_url
   tag  = "v4" # a version or a sha256: digest
+
+  # Or set image_uri (full URI, used as is; repo and tag are then ignored), e.g. for a repository in another account.
 }
 ```
 
-- **Order:** the repository must hold the image before the function is created: provision the repository, push the image, then apply everything.
-- **Digest:** the module looks `tag` up in ECR (`aws_ecr_image`) and runs the image by digest, so copying a new image under the same tag and applying again redeploys it. A missing image fails the plan.
-- **`image_uri`:** set the full image URI (`...amazonaws.com/imgproxy:v4` or `@sha256:...`) to use it as it is, for an exact digest or a repository in another account (which must allow the function's account to pull). `repo` and `tag` are then ignored.
-- **Region:** the only check is that the image is in an ECR repository in the function's region; the module fails the plan otherwise.
-
 ### Scaling, monitoring and logs
 
-- Lambda scales by itself and gives each instance one request, so `workers` defaults to 1. `memory_size` sets CPU (about 1 vCPU per 1769 MB).
+- Lambda scales by itself and gives each instance one request; imgproxy detects Lambda and always runs with one worker (`IMGPROXY_WORKERS` is ignored). `memory_size` sets CPU (about 1 vCPU per 1769 MB).
 - `reserved_concurrency` caps the function. `provisioned_concurrency` keeps instances initialized (billed continuously); the function is then published to the `live` alias and the Function URL points at it.
 - `enable_monitoring = true` turns on X-Ray tracing and imgproxy's CloudWatch metrics (namespace `imgproxy`).
 - `source_buckets` and `cache_bucket` (Pro) grant IAM access to existing buckets; the module doesn't create them. Set `IMGPROXY_S3_REGION` in `environment` for buckets outside the default region.
@@ -227,7 +204,6 @@ Cache keys follow your imgproxy configuration (`Accept` with format detection, c
 | [aws_lambda_function_url.main](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_function_url) | resource |
 | [aws_lambda_permission.cloudfront_url](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) | resource |
 | [aws_lambda_permission.cloudfront_url_invoke](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) | resource |
-| [aws_lambda_permission.public_url](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) | resource |
 | [aws_lambda_permission.public_url_invoke](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) | resource |
 | [aws_lambda_provisioned_concurrency_config.main](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_provisioned_concurrency_config) | resource |
 | [aws_secretsmanager_secret.env](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret) | resource |
@@ -282,7 +258,6 @@ Cache keys follow your imgproxy configuration (`Accept` with format detection, c
 | timeout | imgproxy request timeout in seconds. Sets IMGPROXY\_TIMEOUT. Keep it below function\_timeout. | `number` | no |
 | trusted\_signatures\_secret | Secrets Manager ARN for trusted signature prefixes. imgproxy Pro only. Sets IMGPROXY\_TRUSTED\_SIGNATURES. | ```object({ arn = string version = optional(string, "") })``` | no |
 | vpc\_id | VPC ID to attach the function to. Only needed to reach private resources: the function then loses internet access unless the subnets route through a NAT gateway or VPC endpoints for S3 and Secrets Manager. When null, the function runs outside any VPC. | `string` | no |
-| workers | Number of concurrent requests per function instance. Sets IMGPROXY\_WORKERS. Defaults to 1: Lambda hands one request at a time to each instance. | `number` | no |
 
 ## Outputs
 

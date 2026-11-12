@@ -46,7 +46,7 @@ echo "profile = \"$PROFILE_NAME\"" >> terraform.tfvars # AWS CLI profile used by
 terraform init
 
 # 1. Create the ECR repository (Lambda runs ECR images only; the module does not create it)
-terraform apply -target=aws_ecr_repository.imgproxy -target=aws_ecr_repository_policy.imgproxy
+terraform apply -target=aws_ecr_repository.imgproxy
 
 # 2. Push the image to it. The -arm64 tag is the single-platform build for Graviton, the default architecture
 REPO_URL=$(terraform output -raw repository_url)

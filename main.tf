@@ -15,7 +15,7 @@ module "imgproxy_common" {
   repo = local.image_repo
 
   cpu            = local.vcpus
-  workers        = coalesce(var.workers, 1)
+  workers        = 1 # imgproxy ignores IMGPROXY_WORKERS on Lambda and always uses 1
   timeout        = var.timeout
   signature_size = var.signature_size
 
@@ -277,16 +277,6 @@ resource "aws_lambda_function_url" "main" {
   qualifier          = local.qualifier
   authorization_type = local.url_auth
   invoke_mode        = "RESPONSE_STREAM"
-}
-
-resource "aws_lambda_permission" "public_url" {
-  count                  = local.url_auth == "NONE" ? 1 : 0
-  statement_id           = "FunctionURLAllowPublicAccess"
-  function_name          = aws_lambda_function.main.function_name
-  qualifier              = local.qualifier
-  action                 = "lambda:InvokeFunctionUrl"
-  principal              = "*"
-  function_url_auth_type = "NONE"
 }
 
 # Since October 2025 a Function URL needs lambda:InvokeFunction as well, limited to URL calls.

@@ -141,7 +141,7 @@ run "cloudfront_signs_requests" {
   }
 
   assert {
-    condition     = length(aws_lambda_permission.public_url) == 0 && length(aws_lambda_permission.cloudfront_url) == 1 && length(aws_lambda_permission.cloudfront_url_invoke) == 1
+    condition     = length(aws_lambda_permission.public_url_invoke) == 0 && length(aws_lambda_permission.cloudfront_url) == 1 && length(aws_lambda_permission.cloudfront_url_invoke) == 1
     error_message = "Only CloudFront may invoke the Function URL"
   }
 
@@ -164,7 +164,7 @@ run "private_function_url" {
   }
 
   assert {
-    condition     = length(aws_lambda_permission.public_url) == 0
+    condition     = length(aws_lambda_permission.public_url_invoke) == 0
     error_message = "No public permission for a private Function URL"
   }
 }

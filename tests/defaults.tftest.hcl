@@ -81,7 +81,7 @@ run "default_sizing" {
 
   assert {
     condition     = aws_lambda_function.main.environment[0].variables["IMGPROXY_WORKERS"] == "1"
-    error_message = "Lambda serves one request per instance, so workers must default to 1"
+    error_message = "imgproxy always uses one worker on Lambda, so the module sets IMGPROXY_WORKERS to 1"
   }
 }
 
@@ -108,8 +108,8 @@ run "function_url_is_public_by_default" {
   }
 
   assert {
-    condition     = length(aws_lambda_permission.public_url) == 1 && length(aws_lambda_permission.public_url_invoke) == 1
-    error_message = "A public Function URL needs both InvokeFunctionUrl and InvokeFunction permissions"
+    condition     = length(aws_lambda_permission.public_url_invoke) == 1
+    error_message = "A public Function URL needs the InvokeFunction permission (AWS adds InvokeFunctionUrl itself)"
   }
 }
 
