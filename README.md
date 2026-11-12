@@ -133,6 +133,8 @@ resource "aws_ecr_repository_policy" "imgproxy" {
 }
 ```
 
+Provision it before anything else: the repository and its policy must exist (`terraform apply -target=aws_ecr_repository.imgproxy -target=aws_ecr_repository_policy.imgproxy`, or a separate configuration) before you push the image or create the function.
+
 **2. Push the image** to it. imgproxy publishes single-platform images with an architecture suffix, so pull the one for the function's architecture (`-arm64` by default, `-amd64` with `architecture = "x86_64"`), tag it for your repository and push it. The official image `ghcr.io/imgproxy/imgproxy` bundles the Lambda Web Adapter:
 
 ```bash
@@ -166,7 +168,7 @@ module "imgproxy" {
 }
 ```
 
-- **Order:** the repository must exist and hold the image before the function is created. In one configuration, apply the repository first (`terraform apply -target=aws_ecr_repository.imgproxy -target=aws_ecr_repository_policy.imgproxy`), copy the image, then apply everything; or keep the repository in a separate configuration.
+- **Order:** the repository must hold the image before the function is created: provision the repository, push the image, then apply everything.
 - **Digest:** the module looks `tag` up in ECR (`aws_ecr_image`) and runs the image by digest, so copying a new image under the same tag and applying again redeploys it. A missing image fails the plan.
 - **`image_uri`:** set the full image URI (`...amazonaws.com/imgproxy:v4` or `@sha256:...`) to use it as it is, for an exact digest or a repository in another account (which must allow the function's account to pull). `repo` and `tag` are then ignored.
 - **Region:** the only check is that the image is in an ECR repository in the function's region; the module fails the plan otherwise.
