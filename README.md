@@ -31,7 +31,7 @@ module "imgproxy" {
 }
 ```
 
-Requires Terraform >= 1.5, AWS provider >= 6.28 and a deployer with [sufficient permissions](#permissions).
+Requires Terraform >= 1.15, AWS provider >= 6.28 and a deployer with [sufficient permissions](#permissions).
 
 > [!CAUTION]
 > Lambda only runs images from ECR in the function's region, so before applying you
@@ -44,6 +44,7 @@ Start with [insecure](examples/insecure/) and follow the "Next" link at the end 
 
 - [insecure](examples/insecure/) - Minimal deployment without request signing (development only)
 - [signed](examples/signed/) - URL signing, plus the [production setup](examples/signed/#production-setup)
+- [scaling](examples/scaling/) - Memory, timeouts, reserved and provisioned concurrency
 - [s3](examples/s3/) - Private S3 bucket as the image source
 - [cdn](examples/cdn/) - CloudFront in front of the Function URL
 - [pro](examples/pro/) - imgproxy Pro with license key and S3 result cache
@@ -168,7 +169,7 @@ Cache keys follow your imgproxy configuration (`Accept` with format detection, c
 
 | Name | Version |
 | ---- | ------- |
-| terraform | >= 1.5 |
+| terraform | >= 1.15 |
 | aws | >= 6.28 |
 
 ## Providers

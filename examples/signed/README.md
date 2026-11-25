@@ -110,4 +110,4 @@ aws secretsmanager delete-secret --profile $ADMIN_PROFILE_NAME --region $REGION 
 
 ## Next
 
-Continue with [s3](../s3/).
+Continue with [scaling](../scaling/).
