@@ -145,7 +145,7 @@ module "imgproxy" {
 - Lambda scales by itself and gives each instance one request; imgproxy detects Lambda and always runs with one worker (`IMGPROXY_WORKERS` is ignored). `memory_size` sets CPU (about 1 vCPU per 1769 MB).
 - `reserved_concurrency` caps the function. `provisioned_concurrency` keeps instances initialized (billed continuously); the function is then published to the `live` alias and the Function URL points at it.
 - `enable_monitoring = true` turns on X-Ray tracing and imgproxy's CloudWatch metrics (namespace `imgproxy`).
-- `source_buckets` and `cache_bucket` (Pro) grant IAM access to existing buckets; the module doesn't create them. Set `IMGPROXY_S3_REGION` in `environment` for buckets outside the default region.
+- `source_buckets` and `cache_bucket` (Pro) grant IAM access to existing buckets; the module doesn't create them. `cache_bucket` also sets `IMGPROXY_CACHE_USE=s3` and `IMGPROXY_CACHE_BUCKET`; entries in `environment` override them. Set `IMGPROXY_S3_REGION` in `environment` for buckets outside the default region.
 - imgproxy Pro sends its license heartbeat via a Lambda extension, with no setup. Each instance activates the license under the function name, so keep `reserved_concurrency` within your license's limit.
 - Responses are streamed, lifting the 6 MB buffered limit. `function_timeout` must exceed `timeout`.
 - The function is named `service_name` unless you set `function_name`. Logs go to `/aws/lambda/<function name>`, kept `log_retention_days` (365 by default).

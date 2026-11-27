@@ -21,6 +21,8 @@ module "imgproxy_common" {
 
   secret_key_name = "arn"
   storage_env_key = "IMGPROXY_USE_S3"
+  cache_use       = "s3"
+  cache_bucket    = var.cache_bucket
   storage_enabled = length(var.source_buckets) > 0
 
   insecure    = var.insecure

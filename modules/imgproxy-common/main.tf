@@ -20,6 +20,10 @@ locals {
       OTEL_SERVICE_NAME                      = var.otel_service_name
     } : {},
     var.storage_enabled && var.storage_env_key != null ? { (var.storage_env_key) = "true" } : {},
+    var.cache_use != null && var.cache_bucket != null ? {
+      IMGPROXY_CACHE_USE    = var.cache_use
+      IMGPROXY_CACHE_BUCKET = var.cache_bucket
+    } : {},
     var.environment,
   )
 

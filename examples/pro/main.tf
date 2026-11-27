@@ -77,11 +77,6 @@ module "imgproxy" {
 
   # Existing bucket (see README) for the processed-result cache (Pro)
   cache_bucket = local.cache_bucket
-
-  environment = {
-    IMGPROXY_CACHE_USE    = "s3"
-    IMGPROXY_CACHE_BUCKET = local.cache_bucket
-  }
 }
 
 output "url" {

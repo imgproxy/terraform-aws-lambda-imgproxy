@@ -55,6 +55,28 @@ run "extra_secrets_join_the_dotenv_secret" {
   }
 }
 
+run "cache_bucket_sets_cache_env" {
+  command = plan
+
+  variables {
+    cache_bucket = "my-imgproxy-cache"
+  }
+
+  assert {
+    condition     = aws_lambda_function.main.environment[0].variables["IMGPROXY_CACHE_USE"] == "s3" && aws_lambda_function.main.environment[0].variables["IMGPROXY_CACHE_BUCKET"] == "my-imgproxy-cache"
+    error_message = "cache_bucket must set IMGPROXY_CACHE_USE and IMGPROXY_CACHE_BUCKET"
+  }
+}
+
+run "no_cache_env_without_cache_bucket" {
+  command = plan
+
+  assert {
+    condition     = !contains(keys(aws_lambda_function.main.environment[0].variables), "IMGPROXY_CACHE_USE")
+    error_message = "Cache env vars must not be set without cache_bucket"
+  }
+}
+
 run "s3_source_enables_s3" {
   command = plan
 

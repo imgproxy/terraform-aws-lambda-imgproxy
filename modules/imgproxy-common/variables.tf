@@ -78,6 +78,18 @@ variable "storage_enabled" {
   description = "Whether storage is enabled."
 }
 
+variable "cache_use" {
+  type        = string
+  default     = null
+  description = "Result cache storage type for IMGPROXY_CACHE_USE ('s3', 'gcs' or 'abs'). Together with cache_bucket, enables the Pro result cache."
+}
+
+variable "cache_bucket" {
+  type        = string
+  default     = null
+  description = "Result cache bucket (container for Azure) for IMGPROXY_CACHE_BUCKET. When null, no cache variables are set."
+}
+
 variable "enable_monitoring" {
   type        = bool
   default     = false
